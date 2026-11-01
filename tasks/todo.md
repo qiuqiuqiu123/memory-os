@@ -196,6 +196,12 @@ User explicitly authorized creating a private repository in their GitHub account
 
 - [x] Verify authenticated GitHub account and repository-name availability.
 - [x] Strengthen ignore rules and inspect staged source for credentials/runtime data.
-- [ ] Initialize main branch and create source commit.
-- [ ] Create private GitHub repository and push.
-- [ ] Verify private visibility, remote main SHA, and local worktree; record publication results.
+- [x] Initialize main branch and create source commit.
+- [x] Create private GitHub repository and push.
+- [x] Verify private visibility, remote main SHA, and local worktree; record publication results.
+
+### GitHub publishing review
+
+Created https://github.com/qiuqiuqiu123/memory-os as a private repository and pushed main. Initial source commit b82389200465379855e2a3cfed5e6aeeeb2ff3ca. Verified REST private=true and git ls-remote main matches the local source commit. Staged62 source/config-example/test/documentation files; excluded output, credentials, real .env files, local databases, caches, archives and dependency artifacts. Known live credential comparison found no matches; format-only secret hits were explicit redaction-test fixtures. Included the public tokenizer cache after SHA256 verification. No application behavior changed and deployed services were untouched.
+
+GitHub returned504 after creating the repository, before local remote setup. Read-only REST verification confirmed the private repository already existed; added its exact HTTPS remote and completed push without creating a duplicate.
