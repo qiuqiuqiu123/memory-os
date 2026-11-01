@@ -1,0 +1,57 @@
+# Merge with docker-compose.yml. No embedding port is published to the host.
+services:
+  bge-m3:
+    build:
+      context: ./embedding_service
+      args:
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
+    image: memory-os-bge-m3:local
+    restart: unless-stopped
+    environment:
+      HF_ENDPOINT: ${HF_ENDPOINT:-https://hf-mirror.com}
+      HF_HOME: /models/huggingface
+      HF_HUB_DISABLE_TELEMETRY: "1"
+      HF_HUB_DOWNLOAD_TIMEOUT: "120"
+      HF_HUB_ETAG_TIMEOUT: "30"
+      BGE_REVISION: ${BGE_REVISION:-5617a9f61b028005a4858fdac845db406aefb181}
+      BGE_SOURCE: ${BGE_SOURCE:-huggingface}
+      BGE_MODELSCOPE_REVISION: ${BGE_MODELSCOPE_REVISION:-e44369c5623cc146f016da906583db4ee0e3488d}
+      BGE_MAX_LENGTH: ${BGE_MAX_LENGTH:-512}
+      BGE_BATCH_SIZE: ${BGE_BATCH_SIZE:-2}
+      BGE_THREADS: ${BGE_THREADS:-2}
+      MEMORY_OS_BGE_KEY: ${MEMORY_OS_BGE_KEY:?Set MEMORY_OS_BGE_KEY}
+      OMP_NUM_THREADS: "2"
+      MKL_NUM_THREADS: "2"
+      TOKENIZERS_PARALLELISM: "false"
+    volumes:
+      - bge-model-cache:/models
+    expose:
+      - "8080"
+    mem_limit: 4g
+    cpus: 2
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 40
+      start_period: 15m
+
+  api:
+    environment: &bge-env
+      EMBEDDING_BASE_URL: http://bge-m3:8080/v1
+      EMBEDDING_API_KEY: ${MEMORY_OS_BGE_KEY:?Set MEMORY_OS_BGE_KEY}
+      EMBEDDING_MODEL: BAAI/bge-m3
+      EMBEDDING_DIMENSIONS: "1024"
+      EMBEDDING_SEND_DIMENSIONS: "false"
+    depends_on:
+      bge-m3:
+        condition: service_healthy
+
+  worker:
+    environment: *bge-env
+    depends_on:
+      bge-m3:
+        condition: service_healthy
+
+volumes:
+  bge-model-cache:

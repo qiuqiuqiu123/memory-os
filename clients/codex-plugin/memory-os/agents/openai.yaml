@@ -1,0 +1,4 @@
+interface:
+  display_name: "Memory OS"
+  short_description: "Recall project memory and supplement native execution records"
+  default_prompt: "Use $memory-os for project context and verified memory operations."

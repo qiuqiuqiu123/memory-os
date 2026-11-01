@@ -1,0 +1,10 @@
+{
+  "hooks": {
+    "SessionStart": [{"hooks": [{"type": "command", "command": "python -m memory_os.hooks SessionStart", "timeout": 15}]}],
+    "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "python -m memory_os.hooks UserPromptSubmit", "timeout": 15}]}],
+    "PreToolUse": [{"matcher": ".*", "hooks": [{"type": "command", "command": "python -m memory_os.hooks PreToolUse", "timeout": 15}]}],
+    "PostToolUse": [{"matcher": ".*", "hooks": [{"type": "command", "command": "python -m memory_os.hooks PostToolUse", "timeout": 15}]}],
+    "PostToolUseFailure": [{"matcher": ".*", "hooks": [{"type": "command", "command": "python -m memory_os.hooks PostToolUseFailure", "timeout": 15}]}],
+    "Stop": [{"hooks": [{"type": "command", "command": "python -m memory_os.hooks Stop", "timeout": 15}]}]
+  }
+}

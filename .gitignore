@@ -1,0 +1,33 @@
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Python environment and caches
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+
+# Runtime data, deployment output and local backups
+output/
+backups/
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
+*.log
+
+# Browser/dependency artifacts
+node_modules/
+test-results/
+playwright-report/
+artifacts/
+embedding_service/wheels/
+embedding_service/models/
+
+# OS metadata
+.DS_Store
