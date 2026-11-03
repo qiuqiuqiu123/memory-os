@@ -118,3 +118,19 @@ status pending=0表示上传队列为空，不代表LLM复盘完成。错误只�
 本机已为本插件6个具体处理器登记信任哈希，未使用全局Hook信任绕过；其他机器默认仍需在Codex审阅信任。真实原版CLI运行print：启动、用户输入、工具调用、工具结果和Stop共5条事件自动上传，SessionEnd仅发送空完成批次，形成1个已完成真实LLM复盘。scope为mem-project。
 
 当前桌面会话不能证明已重新加载Hook，新开会话或重启后还需核验。Windows/Linux原生脚本启动和桌面端触发没有实机验收。旧日志扫描器源码、自启项和旧客户端包已从当前交付移除；其SQLite历史状态与云端数据保留。
+
+## 在其他 Codex 中用一句提示词开始安装
+
+先给使用者开通私仓读取权限，并让其在本机完成 GitHub 认证（不在聊天中发送 GitHub token）。在 Codex 输入：
+
+```text
+使用 $skill-installer 从 GitHub 仓库 qiuqiuqiu123/memory-os 安装 skills/memory-os-setup，安装完成后直接读取已安装目录的 SKILL.md，按其流程引导我接入 Memory OS。请先询问服务地址、本机私密密钥文件路径和需要共享的项目 scope，不要让我把密钥发在聊天里。
+```
+
+如果当前会话尚未发现新 skill，在下一轮输入 `使用 $memory-os-setup 帮我配置记忆接入`；必要时重开会话。安装助手本身包含插件资产，安装 skill 后无需再克隆完整项目或下载模型。
+
+用户需要提供 HTTPS 服务地址，或自己已建立的 localhost SSH 隧道，以及 Memory OS 访问密钥。可以在本机私密编辑器将密钥保存为纯文本文件（POSIX 使用 `chmod 600 <文件>`；Windows 限制 NTFS ACL），向 Codex 只提供文件路径。安装助手会调用 `--key-file`，不读取或回显密钥内容。手工运行安装器仍可使用隐藏输入提示。
+
+完成安装后仍需用户按原生界面信任 Hook 并重启/新开会话；文件安装、MCP 查询、实际 Hook 上传及后台复盘分开验收。现有安装不自动覆盖。普通用户不需要服务管理员的 root SSH 权限；服务地址由部署方提供。
+
+维护者：修改 `clients/codex-plugin/` 后运行 `python3 scripts/build_setup_skill.py` 同步可独立分发资产；CI/提交前用 `--check` 检查一致性。

@@ -376,3 +376,59 @@ def test_installer_preserves_valid_existing_mcp_table(tmp_path, section):
         "http://127.0.0.1:18888/mcp/"
     )
     assert "fixture-key" not in result.stdout + result.stderr
+
+
+def test_setup_skill_assets_are_synchronized():
+    root = Path(__file__).parents[1]
+    result = subprocess.run(
+        [sys.executable, str(root / "scripts/build_setup_skill.py"), "--check"],
+        capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize("public_key_file", [False, True])
+def test_bundled_setup_installer_private_key_and_repeat_refusal(tmp_path, public_key_file):
+    if public_key_file and sys.platform == "win32":
+        pytest.skip("POSIX permission check; Windows requires NTFS ACL verification")
+    root = Path(__file__).parents[1]
+    codex = tmp_path / "codex"
+    codex.mkdir()
+    original = 'model = "existing-model"\n'
+    (codex / "config.toml").write_text(original)
+    unrelated = {"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "echo existing"}]}]}}
+    (codex / "hooks.json").write_text(json.dumps(unrelated))
+    key = tmp_path / "private-key"
+    secret = "offline-install-test-only"
+    key.write_text(secret + "\n")
+    key.chmod(0o644 if public_key_file else 0o600)
+    cfg_dir = tmp_path / "config"
+    command = [
+        sys.executable, str(root / "skills/memory-os-setup/assets/plugin/install.py"),
+        "--base-url", "https://memory.example.test/memoryos",
+        "--key-file", str(key), "--codex-home", str(codex),
+        "--config-dir", str(cfg_dir), "--state-dir", str(tmp_path / "state"),
+        "--project", str(tmp_path / "project") + "=shared-project",
+    ]
+    result = subprocess.run(command, capture_output=True, text=True)
+    assert secret not in result.stdout + result.stderr
+    if public_key_file:
+        assert result.returncode != 0
+        assert not cfg_dir.exists()
+        assert (codex / "config.toml").read_text() == original
+        return
+    assert result.returncode == 0, result.stderr
+    cfg = json.loads((cfg_dir / "hook-config.json").read_text())
+    assert cfg["api_key"] == secret
+    assert list(cfg["scope_overrides"].values()) == ["shared-project"]
+    mcp = tomllib.loads((codex / "config.toml").read_text())
+    assert mcp["model"] == "existing-model"
+    assert mcp["mcp_servers"]["memory-os"]["url"] == "https://memory.example.test/memoryos/mcp/"
+    hooks = json.loads((codex / "hooks.json").read_text())
+    assert hooks["hooks"]["Stop"][0] == unrelated["hooks"]["Stop"][0]
+    assert len(hooks["hooks"]) == 6
+    snapshot = {p: p.read_bytes() for folder in (codex, cfg_dir) for p in folder.rglob("*") if p.is_file()}
+    repeated = subprocess.run(command, capture_output=True, text=True)
+    assert repeated.returncode != 0
+    assert secret not in repeated.stdout + repeated.stderr
+    assert all(p.read_bytes() == content for p, content in snapshot.items())

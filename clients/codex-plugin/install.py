@@ -38,10 +38,12 @@ def main():
     p.add_argument("--codex-home", default=os.environ.get("CODEX_HOME", "~/.codex"))
     p.add_argument("--config-dir", default="~/.config/memory-os")
     p.add_argument("--state-dir", default="~/.local/share/memory-os")
-    p.add_argument(
+    secrets = p.add_mutually_exclusive_group()
+    secrets.add_argument(
         "--reuse-key-from",
         help="Read an existing private Memory OS configuration; never prints key",
     )
+    secrets.add_argument("--key-file", help="Read API key from a private UTF-8 file; never prints key")
     a = p.parse_args()
     try:
         import tomllib
@@ -84,13 +86,19 @@ def main():
         r"^\s*[\"\']?mcp_servers[\"\']?\s*=", mcp_content, re.M
     ):
         p.error("Existing inline mcp_servers requires manual merge; no files changed.")
-    key = (
-        config_read(a.reuse_key_from)["api_key"]
-        if a.reuse_key_from
-        else getpass.getpass("Memory OS API key (hidden): ").strip()
-    )
+    if a.key_file:
+        key_path = Path(a.key_file).expanduser()
+        if os.name != "nt" and key_path.stat().st_mode & 0o077:
+            p.error("Key file must be private (chmod 600); no files changed.")
+        key = key_path.read_text(encoding="utf-8").strip()
+    elif a.reuse_key_from:
+        key = config_read(a.reuse_key_from)["api_key"]
+    else:
+        key = getpass.getpass("Memory OS API key (hidden): ").strip()
     if not key:
         p.error("API key required")
+    if any(ord(c) < 32 or ord(c) == 127 for c in key):
+        p.error("API key contains invalid control characters")
     # Validate the endpoint before writing any persistent configuration.
     from urllib.parse import urlparse
 

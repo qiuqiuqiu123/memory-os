@@ -1,0 +1,4 @@
+interface:
+  display_name: "Memory OS 安装助手"
+  short_description: "Install native Memory OS Hooks and MCP into your existing Codex"
+  default_prompt: "使用 $memory-os-setup 帮我连接这台机器的 Codex 到我的 Memory OS 服务。"
