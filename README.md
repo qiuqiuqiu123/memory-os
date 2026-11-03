@@ -163,7 +163,7 @@ NODE_PATH=/path/to/node_modules MEMORY_OS_URL=http://127.0.0.1:8000 \
 在有本私仓读取权限并已配置 GitHub 认证的 Codex 中输入：
 
 ```text
-使用 $skill-installer 从 qiuqiuqiu123/memory-os 安装 skills/memory-os-setup，安装完成后直接读取已安装目录的 SKILL.md，按其流程引导我配置这台机器的记忆接入。密钥只通过本机私密文件提供，不发到聊天中。
+使用 $skill-installer 从 qiuqiuqiu123/memory-os 安装 skills/memory-os-setup，安装完成后直接读取已安装目录的 SKILL.md，按其流程引导我配置这台机器的记忆接入。使用 MEMORY_OS_BASE_URL 和 MEMORY_OS_API_KEY 环境变量；如果我明确选择公网 HTTP 调试，则启用 MEMORY_OS_ALLOW_INSECURE_HTTP=1，不另建密钥文件。
 ```
 
 安装助手会配置原版 Codex 的原生 Hook、MCP 和记忆操作 skill。需要 Memory OS 服务地址及访问密钥；信任 Hook、重启客户端后再验证实际上传。私仓权限不会随提示词自动授予。详细步骤见 [插件接入说明](clients/codex-plugin/README.md)。

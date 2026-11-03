@@ -17,27 +17,34 @@
 ## 安装
 
 先将压缩包解压到普通用户的固定目录。无需安装Python依赖或Docker。
-当前服务器没有已验证公网HTTPS，先用每台机器自己的SSH权限建立隧道（OpenSSH在Windows也可使用）：
+可使用 HTTPS，或通过 SSH 隧道访问本机 HTTP（OpenSSH 在 Windows 也可使用）：
 
 ```sh
 ssh -N -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -L 127.0.0.1:18082:127.0.0.1:18080 root@139.199.231.195
 ```
 
-保持隧道连接。在安装包目录执行（项目路径替换为本机实际路径）：
+保持隧道连接；也可以显式选择下文的公网 HTTP 调试方式。在安装包目录执行前，先设置服务地址和访问密钥（项目路径替换为本机实际路径）：
 
 macOS/Linux：
 
 ```sh
+export MEMORY_OS_BASE_URL="http://127.0.0.1:18082"
+# 在自己的终端中隐藏输入，不将真实密钥写入命令历史
+read -r -s MEMORY_OS_API_KEY  # 输入后按回车；适用于 Bash/Zsh
+export MEMORY_OS_API_KEY
 python3 install.py --project "$HOME/workspace/mem-project=mem-project"
 ```
 
 Windows PowerShell：
 
 ```powershell
+$env:MEMORY_OS_BASE_URL = "http://127.0.0.1:18082"
+$secret = Read-Host "Memory OS API key" -AsSecureString
+$env:MEMORY_OS_API_KEY = [System.Net.NetworkCredential]::new("", $secret).Password
 py -3 install.py --project "C:\work\mem-project=mem-project"
 ```
 
-按提示输入 Memory OS 访问密钥，不是 LLM/embedding key。不要把密钥写在命令行。
+安装器读取 `MEMORY_OS_BASE_URL` 和 `MEMORY_OS_API_KEY`，不要求另建密钥文件；密钥不是 LLM/embedding key。不要把真实密钥写入聊天或命令参数。
 不同机器使用同user_id下的凭据和相同scope才能共享；可重复传 --project PATH=SCOPE。
 没有映射的项目按本机规范化绝对路径生成scope，因此同名目录不会自动跨机器合并。
 
@@ -46,9 +53,22 @@ py -3 install.py --project "C:\work\mem-project=mem-project"
 - ~/.codex/hooks.json：保留既有Hook，追加本插件事件处理器；已有文件先备份。
 - ~/.codex/memory-os/memory_hook.py：独立事件处理脚本。
 - ~/.codex/skills/memory-os：记忆操作Skill。
-- ~/.config/memory-os/hook-config.json：私密endpoint/key/scope映射。
+- ~/.config/memory-os/hook-config.json：endpoint、环境变量名和scope映射（环境变量模式不保存key）。
 - ~/.local/share/memory-os/hooks.sqlite3：首次Hook运行时创建队列。
-- ~/.codex/config.toml：如果没有memory-os MCP才追加；已有节原样保留，需确认endpoint/用户一致。
+- ~/.codex/config.toml：如果没有memory-os MCP才追加，使用 `bearer_token_env_var = "MEMORY_OS_API_KEY"`；已有节原样保留，需确认endpoint/用户一致。
+
+**公网 HTTP 调试（默认关闭）**：在安装前额外设置：
+
+```sh
+export MEMORY_OS_BASE_URL="http://139.199.231.195:18080"
+export MEMORY_OS_ALLOW_INSECURE_HTTP=1
+```
+
+PowerShell 对应 `$env:MEMORY_OS_BASE_URL = "http://139.199.231.195:18080"` 和 `$env:MEMORY_OS_ALLOW_INSECURE_HTTP = "1"`。也可在安装命令添加 `--allow-insecure-http`。HTTP 地址本身不代表同意开启；未开启时安装器和运行时都拒绝公网 HTTP。调试模式会明文传输密钥和记忆，不改变 HTTPS 校验或重定向保护。
+
+URL 是安装时输入，随后写入 Hook/MCP 配置；后续单独更改 URL 环境变量不会自动更新已有配置。密钥由 Hook/MCP 每次从 Codex 环境读取，不写入配置。每次启动 Codex 都需让其继承 `MEMORY_OS_API_KEY`；桌面图标启动的应用可能不继承终端变量。若当前客户端读不到变量，先从已配置的环境重新启动对应客户端。不要让安装助手打印变量值，也不要自动写入 shell 配置文件。
+
+旧 `--key-file` / `--reuse-key-from` 方式只保留兼容；显式使用它们时仍会采用旧的密钥持久化方式。
 
 Python解释器路径固定为安装时所用解释器，安装后不要删除它。Windows的chmod不等于NTFS ACL，请在Windows文件权限中限制配置与队列只允许本账户访问。
 
@@ -124,12 +144,12 @@ status pending=0表示上传队列为空，不代表LLM复盘完成。错误只�
 先给使用者开通私仓读取权限，并让其在本机完成 GitHub 认证（不在聊天中发送 GitHub token）。在 Codex 输入：
 
 ```text
-使用 $skill-installer 从 GitHub 仓库 qiuqiuqiu123/memory-os 安装 skills/memory-os-setup，安装完成后直接读取已安装目录的 SKILL.md，按其流程引导我接入 Memory OS。请先询问服务地址、本机私密密钥文件路径和需要共享的项目 scope，不要让我把密钥发在聊天里。
+使用 $skill-installer 从 GitHub 仓库 qiuqiuqiu123/memory-os 安装 skills/memory-os-setup，安装完成后直接读取已安装目录的 SKILL.md，按其流程引导我接入 Memory OS。使用 MEMORY_OS_BASE_URL 和 MEMORY_OS_API_KEY 环境变量，询问需要共享的项目 scope；公网 HTTP 调试仅在明确选择后启用 MEMORY_OS_ALLOW_INSECURE_HTTP=1。不要另建密钥文件或让我把密钥发在聊天里。
 ```
 
 如果当前会话尚未发现新 skill，在下一轮输入 `使用 $memory-os-setup 帮我配置记忆接入`；必要时重开会话。安装助手本身包含插件资产，安装 skill 后无需再克隆完整项目或下载模型。
 
-用户需要提供 HTTPS 服务地址，或自己已建立的 localhost SSH 隧道，以及 Memory OS 访问密钥。可以在本机私密编辑器将密钥保存为纯文本文件（POSIX 使用 `chmod 600 <文件>`；Windows 限制 NTFS ACL），向 Codex 只提供文件路径。安装助手会调用 `--key-file`，不读取或回显密钥内容。手工运行安装器仍可使用隐藏输入提示。
+用户设置上述三个环境变量即可；默认 HTTPS/localhost HTTP，公网 HTTP 调试需显式启用。密钥由 Hook 与 MCP 从运行环境读取，不通过文件配置，也不在聊天中传递。服务地址由部署方提供。
 
 完成安装后仍需用户按原生界面信任 Hook 并重启/新开会话；文件安装、MCP 查询、实际 Hook 上传及后台复盘分开验收。现有安装不自动覆盖。普通用户不需要服务管理员的 root SSH 权限；服务地址由部署方提供。
 

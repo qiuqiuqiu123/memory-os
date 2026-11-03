@@ -9,9 +9,11 @@ Connect the user's existing Codex to their Memory OS service. The bundled instal
 
 ## Gather connection settings
 
-Ask only for missing items: service base URL (not `/mcp/`), private local key-file path, and optional project-path → shared-scope mappings. The key is a Memory OS access key, not a model-provider key. Do not ask the user to paste secrets into chat or command arguments; do not read/print a key file with agent tools. Have the user prepare it privately using an editor or a hidden terminal prompt. The installer reads it itself. On POSIX require mode 600; on Windows have the user restrict the NTFS ACL to their account. Never write real credentials into a project, skill or Git repository.
+Use fixed environment variables: `MEMORY_OS_BASE_URL` (service base, not `/mcp/`), `MEMORY_OS_API_KEY` (Memory OS access key, not a model key), and optional `MEMORY_OS_ALLOW_INSECURE_HTTP=1`. Ask only for missing service address and optional project-path → shared-scope mappings. Have the user set the key privately in the launching environment; do not ask for its value, print environment variables, or create a secret file. Check only whether required variables are present. Hook and MCP read the key at runtime; generated files contain only its variable name.
 
-Use HTTPS, or a user-established SSH tunnel to localhost. Do not assume the user has the service owner's root SSH access. If only public HTTP is available, explain the supported transport options and wait for a usable endpoint. Do not silently start a tunnel or hardcode an owner's host/key.
+Default to HTTPS or localhost HTTP. Public HTTP is supported only when the user explicitly chooses debug mode with `MEMORY_OS_ALLOW_INSECURE_HTTP=1` or `--allow-insecure-http`; mention once that credentials and memory are unencrypted. An HTTP URL alone is not opt-in. Never disable TLS certificate checks or redirect protection. Do not start a tunnel or assume the user has the service owner's SSH access.
+
+The URL is read at installation and stored as the Hook/MCP endpoint; changing the URL environment variable later does not reconfigure an existing MCP registration. The key must be available whenever Codex starts, including its Hook subprocesses. A GUI launched independently may not inherit shell exports. If variables are absent in the current client, ask the user to restart Codex from the configured environment using the platform's actual supported launch method; do not invent a universal GUI launch command or silently persist the key in files/global shell configuration.
 
 For the same project on multiple machines, use the same explicit scope and credentials belonging to the same Memory OS user. Without a mapping, the scope includes the canonical absolute path hash and will differ across machines. No historical sessions are backfilled.
 
@@ -22,12 +24,12 @@ Resolve CODEX_HOME (default `~/.codex`) and available Python 3.11+. Inspect conf
 Run the bundled installer relative to this SKILL.md (quote real absolute paths; replace placeholders):
 
 ```sh
-python3 "<skill-dir>/assets/plugin/install.py" --base-url "<service-base-url>" --key-file "<private-key-file>" --project "<absolute-project-path>=<shared-scope>"
+python3 "<skill-dir>/assets/plugin/install.py" --project "<absolute-project-path>=<shared-scope>"
 ```
 
-Windows may use `py -3.11` or a verified newer interpreter; macOS/Linux use a verified Python 3.11+ executable. Omit `--project` when no mappings are requested; repeat for multiple projects. Honor custom CODEX_HOME, and only pass custom config/state directories if requested. For manual execution in the user's own terminal, omitting `--key-file` gives a hidden prompt. No pip dependencies are required.
+Windows may use `py -3.11` or a verified newer interpreter; macOS/Linux use a verified Python 3.11+ executable. Omit `--project` when no mappings are requested; repeat for multiple projects. Honor custom CODEX_HOME, and only pass custom config/state directories if requested. If environment variables are missing, stop with setup instructions rather than using a key file. No pip dependencies are required. Legacy `--key-file`/`--reuse-key-from` remain for compatibility only and must not be the default workflow.
 
-Installation writes six native Hook handlers, runtime, private configuration/outbox location, `memory-os` operation skill and MCP registration. It does not grant Hook trust or restart Codex. Do not globally bypass trust. Ask the user to review/trust the handlers through the client's native UI and restart/open a new session. If the client lacks native Hook support, retain MCP/skill access and disclose that automatic event collection is unavailable.
+Installation writes six native Hook handlers, runtime, non-secret configuration/outbox location, `memory-os` operation skill and MCP registration. It does not grant Hook trust or restart Codex. Do not globally bypass trust. Ask the user to review/trust the handlers through the client's native UI and restart/open a new session. If the client lacks native Hook support, retain MCP/skill access and disclose that automatic event collection is unavailable.
 
 Offer a project AGENTS.md addition using the user's confirmed scope; preserve existing content and add once:
 

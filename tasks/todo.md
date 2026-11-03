@@ -218,3 +218,16 @@ Plan confirmed against request: deliver a self-contained `memory-os-setup` skill
 ### Review
 
 25 native Hook/installer tests passed, including isolated bundled installation, POSIX key-file permissions, preserved unrelated settings/Hooks, credential-free output, and no writes on repeated installation. Skill frontmatter validation, asset synchronization and git diff whitespace checks passed. Independent review checked actual skill instructions and corrected the first-install prompt to read installed instructions directly rather than assuming same-turn skill discovery. No running service/client configuration changed. Windows/Linux physical acceptance and new-client Hook/MCP-to-review verification remain per-machine steps. Published source commit 879019e to private qiuqiuqiu123/memory-os main; remote SHA matched and REST private=true. Actual skill-installer GitHub sparse download into an isolated temporary directory succeeded: all six distributed files match source, and the downloaded standalone installer starts. No live client reinstall or service mutation performed.
+
+## 2026-11-03 Environment configuration and explicit HTTP debug mode
+
+Plan confirmed from user request: use MEMORY_OS_BASE_URL and MEMORY_OS_API_KEY as the primary installation inputs; keep the API key out of generated files using native MCP bearer_token_env_var and Hook environment lookup. Allow public HTTP only with --allow-insecure-http or MEMORY_OS_ALLOW_INSECURE_HTTP=1; persist the explicit transport choice for Hook execution. Keep existing file-based installations compatible, synchronize the standalone skill, validate isolated install/runtime/HTTP behavior, and publish source updates. No live local or cloud configuration migration.
+
+- [x] Implement shared URL validation, explicit HTTP opt-in and environment key resolution.
+- [x] Update installer, standalone setup skill, documentation and lessons.
+- [x] Verify default rejection, enabled HTTP, environment-only secret handling and compatibility.
+- [ ] Publish verified changes and record exact limits.
+
+### HTTP/environment verification
+
+41 native Hook/installer tests passed in 1.20s. Coverage includes strict default HTTP rejection, explicit CLI/environment opt-in, rejection of truthy-but-not-1 environment values, generated config/MCP/runtime key references without stored secret values, missing environment keys before writes, malformed URL rejection and legacy installation compatibility. Skill validation, synchronized bundle assets and whitespace checks passed. Independent code review found no blocking issue. Public http://139.199.231.195:18080/mcp/ initialize and tools/list succeeded from this client, returning all9 tools including capture_report; no memory writes. No live client configuration migration or new-machine Hook/review acceptance was performed. URL is an install-time snapshot; Codex must inherit MEMORY_OS_API_KEY on each launch. Publication pending.

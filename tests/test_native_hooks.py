@@ -432,3 +432,100 @@ def test_bundled_setup_installer_private_key_and_repeat_refusal(tmp_path, public
     assert repeated.returncode != 0
     assert secret not in repeated.stdout + repeated.stderr
     assert all(p.read_bytes() == content for p, content in snapshot.items())
+
+
+@pytest.mark.parametrize(
+    "url,extra,debug_env,accepted",
+    [
+        ("http://203.0.113.10:18080", [], None, False),
+        ("http://203.0.113.10:18080", [], "true", False),
+        ("http://203.0.113.10:18080", [], "1", True),
+        ("http://203.0.113.10:18080", ["--allow-insecure-http"], None, True),
+        ("https://memory.example.test/memoryos", [], None, True),
+        ("http://127.0.0.1:18082", [], None, True),
+        ("ftp://memory.example.test", ["--allow-insecure-http"], None, False),
+        ("https://user:password@memory.example.test", [], None, False),
+    ],
+)
+def test_env_install_http_opt_in_and_no_secret_files(tmp_path, url, extra, debug_env, accepted):
+    import os
+
+    root = Path(__file__).parents[1]
+    env = dict(os.environ)
+    env.pop("MEMORY_OS_ALLOW_INSECURE_HTTP", None)
+    secret = "offline-env-test-only"
+    env.update(MEMORY_OS_API_KEY=secret, MEMORY_OS_BASE_URL=url)
+    if debug_env is not None:
+        env["MEMORY_OS_ALLOW_INSECURE_HTTP"] = debug_env
+    codex = tmp_path / "codex"
+    cfg_dir = tmp_path / "config"
+    result = subprocess.run(
+        [sys.executable, str(root / "skills/memory-os-setup/assets/plugin/install.py"),
+         "--codex-home", str(codex), "--config-dir", str(cfg_dir),
+         "--state-dir", str(tmp_path / "state"), *extra],
+        env=env, capture_output=True, text=True,
+    )
+    assert secret not in result.stdout + result.stderr
+    assert (result.returncode == 0) is accepted
+    if not accepted:
+        assert not codex.exists() and not cfg_dir.exists()
+        return
+    config = json.loads((cfg_dir / "hook-config.json").read_text())
+    assert "api_key" not in config
+    assert config["api_key_env"] == "MEMORY_OS_API_KEY"
+    assert config["base_url"] == url
+    assert config["allow_insecure_http"] == (debug_env == "1" or bool(extra))
+    mcp = tomllib.loads((codex / "config.toml").read_text())["mcp_servers"]["memory-os"]
+    assert mcp["url"] == url + "/mcp/"
+    assert mcp["bearer_token_env_var"] == "MEMORY_OS_API_KEY"
+    assert "http_headers" not in mcp
+    for path in tmp_path.rglob("*"):
+        if path.is_file():
+            assert secret.encode() not in path.read_bytes(), path.name
+
+
+def test_env_runtime_requires_key_and_explicit_http(hook, tmp_path, monkeypatch):
+    path = tmp_path / "config.json"
+    config = {"base_url": "http://203.0.113.10:18080", "api_key_env": "MEMORY_OS_API_KEY"}
+    path.write_text(json.dumps(config))
+    path.chmod(0o600)
+    monkeypatch.setenv("MEMORY_OS_API_KEY", "offline-test-runtime")
+    with pytest.raises(ValueError, match="HTTPS"):
+        hook.config_read(path)
+    config["allow_insecure_http"] = "true"
+    path.write_text(json.dumps(config))
+    with pytest.raises(ValueError, match="HTTPS"):
+        hook.config_read(path)
+    config["allow_insecure_http"] = True
+    path.write_text(json.dumps(config))
+    resolved = hook.config_read(path)
+    assert resolved["api_key"] == "offline-test-runtime"
+    monkeypatch.delenv("MEMORY_OS_API_KEY")
+    with pytest.raises(ValueError, match="API key required"):
+        hook.config_read(path)
+    assert "api_key" not in json.loads(path.read_text())
+
+
+@pytest.mark.parametrize("url", [
+    "https:///missing-host", "https://example.test:99999", "https://example.test?key=secret",
+    "https://example.test/#fragment", "http://example.test\n", "https://example.test:invalid",
+])
+def test_base_url_validation_rejects_malformed_or_embedded_config(hook, url):
+    with pytest.raises(ValueError):
+        hook.validate_base_url(url, True)
+
+
+def test_env_installer_missing_key_stops_without_files(tmp_path):
+    import os
+
+    env = dict(os.environ)
+    env.pop("MEMORY_OS_API_KEY", None)
+    env["MEMORY_OS_BASE_URL"] = "https://memory.example.test"
+    result = subprocess.run(
+        [sys.executable, str(Path(__file__).parents[1] / "clients/codex-plugin/install.py"),
+         "--codex-home", str(tmp_path / "codex"), "--config-dir", str(tmp_path / "config")],
+        env=env, capture_output=True, text=True,
+    )
+    assert result.returncode != 0
+    assert "MEMORY_OS_API_KEY" in result.stderr
+    assert list(tmp_path.iterdir()) == []

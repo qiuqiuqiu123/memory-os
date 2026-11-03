@@ -121,18 +121,39 @@ def resolve_scope(cwd, cfg):
     return "codex:" + slug + ":" + hashlib.sha256(path.encode()).hexdigest()[:16]
 
 
+def validate_base_url(value, allow_insecure_http=False):
+    parsed = urlparse(value)
+    if (
+        not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+        or any(ord(c) <= 32 or ord(c) == 127 for c in value)
+    ):
+        raise ValueError("Invalid service base URL")
+    # Accessing port also validates malformed/out-of-range port values.
+    parsed.port
+    if parsed.scheme == "https" or (
+        parsed.scheme == "http"
+        and (parsed.hostname in ("localhost", "127.0.0.1", "::1") or allow_insecure_http is True)
+    ):
+        return value.rstrip("/")
+    raise ValueError("Use HTTPS/localhost or explicitly enable insecure HTTP debug mode")
+
+
 def config_read(path):
     path = Path(path).expanduser()
     if os.name != "nt" and path.stat().st_mode & 0o077:
         raise ValueError("Private config requires mode 600")
     cfg = json.loads(path.read_text(encoding="utf-8"))
-    parsed = urlparse(cfg["base_url"])
-    if parsed.scheme != "https" and not (
-        parsed.scheme == "http" and parsed.hostname in ("localhost", "127.0.0.1", "::1")
-    ):
-        raise ValueError("Use HTTPS or a loopback SSH tunnel")
+    cfg["base_url"] = validate_base_url(cfg["base_url"], cfg.get("allow_insecure_http", False))
+    if cfg.get("api_key_env"):
+        cfg["api_key"] = os.environ.get(cfg["api_key_env"], "").strip()
     if not cfg.get("api_key"):
-        raise ValueError("API key required")
+        raise ValueError("API key required in the configured environment variable or legacy config")
+    if any(ord(c) < 32 or ord(c) == 127 for c in cfg["api_key"]):
+        raise ValueError("API key contains invalid control characters")
     return cfg
 
 

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import getpass
 import json
 import os
 import re
@@ -33,7 +32,12 @@ def backup(path):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--base-url", default="http://127.0.0.1:18082")
+    p.add_argument("--base-url", default=os.environ.get("MEMORY_OS_BASE_URL", "http://127.0.0.1:18082"))
+    p.add_argument(
+        "--allow-insecure-http", action="store_true",
+        default=os.environ.get("MEMORY_OS_ALLOW_INSECURE_HTTP") == "1",
+        help="Explicitly allow public HTTP for debugging (unencrypted transport)",
+    )
     p.add_argument("--project", action="append", default=[], metavar="PATH=SCOPE")
     p.add_argument("--codex-home", default=os.environ.get("CODEX_HOME", "~/.codex"))
     p.add_argument("--config-dir", default="~/.config/memory-os")
@@ -53,7 +57,7 @@ def main():
         )
     source = Path(__file__).resolve().parent
     sys.path.insert(0, str(source))
-    from memory_hook import config_read
+    from memory_hook import config_read, validate_base_url
 
     codex = Path(a.codex_home).expanduser().resolve()
     cfg_dir = Path(a.config_dir).expanduser().resolve()
@@ -94,19 +98,16 @@ def main():
     elif a.reuse_key_from:
         key = config_read(a.reuse_key_from)["api_key"]
     else:
-        key = getpass.getpass("Memory OS API key (hidden): ").strip()
+        key = os.environ.get("MEMORY_OS_API_KEY", "").strip()
     if not key:
-        p.error("API key required")
+        p.error("Set MEMORY_OS_API_KEY in the environment before installation")
     if any(ord(c) < 32 or ord(c) == 127 for c in key):
         p.error("API key contains invalid control characters")
     # Validate the endpoint before writing any persistent configuration.
-    from urllib.parse import urlparse
-
-    parsed = urlparse(a.base_url)
-    if parsed.scheme != "https" and not (
-        parsed.scheme == "http" and parsed.hostname in ("localhost", "127.0.0.1", "::1")
-    ):
-        p.error("Use HTTPS or localhost through SSH")
+    try:
+        a.base_url = validate_base_url(a.base_url, a.allow_insecure_http)
+    except ValueError:
+        p.error("Invalid URL; use HTTPS/localhost or --allow-insecure-http for public HTTP debug")
     target = codex / "memory-os" / "memory_hook.py"
     if target.exists():
         p.error("Existing plugin runtime found; refusing to overwrite.")
@@ -115,11 +116,13 @@ def main():
         p.error("Existing memory-os skill found; refusing to overwrite.")
     config = dict(
         base_url=a.base_url.rstrip("/"),
-        api_key=key,
+        allow_insecure_http=a.allow_insecure_http,
         scope_overrides=overrides,
         db_path=str(state / "hooks.sqlite3"),
         recall_on_start=True,
     )
+    env_key = not (a.key_file or a.reuse_key_from)
+    config.update({"api_key_env": "MEMORY_OS_API_KEY"} if env_key else {"api_key": key})
     state.mkdir(parents=True, exist_ok=True, mode=0o700)
     private_write(config_path, json.dumps(config, indent=2, ensure_ascii=False) + "\n")
     private_write(target, (source / "memory_hook.py").read_text(encoding="utf-8"))
@@ -154,12 +157,17 @@ def main():
         stanza = (
             "\n[mcp_servers.memory-os]\nurl = "
             + json.dumps(a.base_url.rstrip("/") + "/mcp/")
-            + "\nhttp_headers = { Authorization = "
-            + json.dumps("Bearer " + key)
-            + " }\n"
+            + (
+                '\nbearer_token_env_var = "MEMORY_OS_API_KEY"\n'
+                if env_key else "\nhttp_headers = { Authorization = " + json.dumps("Bearer " + key) + " }\n"
+            )
         )
         private_write(mcp_path, mcp_content + stanza)
     print("Installed event-driven hooks, private configuration, skill, and MCP registration.")
+    if env_key:
+        print("Hook and MCP read MEMORY_OS_API_KEY from the Codex process environment; key not saved.")
+    if a.allow_insecure_http and a.base_url.startswith("http://"):
+        print("HTTP debug mode enabled: credentials and memory travel without TLS encryption.")
     print(
         "No Hook trust bypass applied. Restart Codex, review and trust the installed hooks using its normal trust prompt."
     )
