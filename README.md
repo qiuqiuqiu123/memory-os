@@ -154,16 +154,16 @@ NODE_PATH=/path/to/node_modules MEMORY_OS_URL=http://127.0.0.1:8000 \
 
 当前接入原版Codex的原生生命周期Hook：用户输入、工具调用/结果、回合完成，SessionStart提供最多400token的项目记忆。插件仅处理本次stdin，先脱敏入本地SQLite队列，再有限上传退出；不修改Codex、不扫描会话日志、不常驻。断网留队列，下次事件或手动flush补传。
 
-云端沿用capture API、增量LLM复盘、证据链接与候选记忆人工批准。MCP支持recall/inject、明确remember及capture_report补充决策和验证结论，不重复工具轨迹。本机旧日志扫描器已停用；原本地API/数据库容器保持停止，仅SSH隧道常驻。
+云端沿用capture API、增量LLM复盘、证据链接与记忆自动入库与事后剔除。MCP支持recall/inject、明确remember及capture_report补充决策和验证结论，不重复工具轨迹。本机旧日志扫描器已停用；原本地API/数据库容器保持停止，仅SSH隧道常驻。
 
 见[插件安装与跨机器scope说明](clients/codex-plugin/README.md)。macOS/Linux/Windows共享标准库脚本，但原生Hook覆盖取决于客户端版本，真实平台验收边界见[验证记录](docs/verification.md)。旧日志适配器文档只作历史记录，不作为默认接入。
 
 ## Codex 一句话安装入口
 
-在有本私仓读取权限并已配置 GitHub 认证的 Codex 中输入：
+在 Codex 中输入：
 
 ```text
 使用 $skill-installer 从 qiuqiuqiu123/memory-os 安装 skills/memory-os-setup，安装完成后直接读取已安装目录的 SKILL.md，按其流程引导我配置这台机器的记忆接入。使用 MEMORY_OS_BASE_URL 和 MEMORY_OS_API_KEY 环境变量；如果我明确选择公网 HTTP 调试，则启用 MEMORY_OS_ALLOW_INSECURE_HTTP=1，不另建密钥文件。
 ```
 
-安装助手会配置原版 Codex 的原生 Hook、MCP 和记忆操作 skill。需要 Memory OS 服务地址及访问密钥；信任 Hook、重启客户端后再验证实际上传。私仓权限不会随提示词自动授予。详细步骤见 [插件接入说明](clients/codex-plugin/README.md)。
+安装助手会配置原版 Codex 的原生 Hook、MCP 和记忆操作 skill。需要 Memory OS 服务地址及访问密钥；信任 Hook、重启客户端后再验证实际上传。仓库现已公开；记忆服务的数据仍通过访问密钥隔离。详细步骤见 [插件接入说明](clients/codex-plugin/README.md)。

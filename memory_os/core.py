@@ -209,6 +209,12 @@ class Core:
                 "UPDATE memory_items SET deleted=TRUE,version=%s WHERE user_id=%s AND scope=%s AND id=%s",
                 (v, *key),
             )
+            # All deletion paths (REST, MCP, console and replay) invalidate
+            # linked review candidates so automatic review cannot revive them.
+            conn.execute(
+                "UPDATE capture_candidates SET status='rejected' WHERE user_id=%s AND scope=%s AND memory_id=%s",
+                key,
+            )
         if kind in ("memory.created", "memory.updated", "memory.deleted"):
             row = conn.execute(
                 "SELECT * FROM memory_items WHERE user_id=%s AND scope=%s AND id=%s",

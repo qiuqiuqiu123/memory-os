@@ -231,3 +231,31 @@ Plan confirmed from user request: use MEMORY_OS_BASE_URL and MEMORY_OS_API_KEY a
 ### HTTP/environment verification
 
 41 native Hook/installer tests passed in 1.20s. Coverage includes strict default HTTP rejection, explicit CLI/environment opt-in, rejection of truthy-but-not-1 environment values, generated config/MCP/runtime key references without stored secret values, missing environment keys before writes, malformed URL rejection and legacy installation compatibility. Skill validation, synchronized bundle assets and whitespace checks passed. Independent code review found no blocking issue. Public http://139.199.231.195:18080/mcp/ initialize and tools/list succeeded from this client, returning all9 tools including capture_report; no memory writes. No live client configuration migration or new-machine Hook/review acceptance was performed. URL is an install-time snapshot; Codex must inherit MEMORY_OS_API_KEY on each launch. Published implementation commit 67b9d28cd338adf338e42000a809c3ec84a5b60b to private repository main; git ls-remote matched the exact implementation SHA and worktree was clean before this final checklist update.
+
+## 2026-11-04 Other-machine capture diagnosis
+
+Read-only plan: identify recent cloud sessions/scopes and review state, correlate with the user's other-machine time/client/scope, then distinguish installation/MCP access/native Hook delivery/review/approved memory. Do not write test memories or modify remote/local client configuration during diagnosis.
+
+- [x] Inspect recent cloud capture and memory metadata without exposing credentials or event content.
+- [x] Correlate incoming events with the user-provided scope new-api; user requested server-only evidence.
+- [x] Report confirmed server-side state; no demonstrated source defect or client-side cause asserted.
+
+### Other-machine diagnosis result
+
+Queried server PostgreSQL across all users for exact scope new-api: capture_sessions=0, capture_events=0, capture_reviews=0, capture_candidates=0, jobs=0, memory_items=0, domain events=0. No similar new-api capture scope found. API/PG/Qdrant/BGE healthy, worker running. Last4h logs:145 capture POST200, MCP32 POST200/15 POST202; API/worker error-marker count0. These aggregate writes cannot be attributed to new-api. Requests explicitly mentioning new-api were only GET status/memory/trace/session queries (including one trace-query401); request bodies are not logged. Existing ongoing native-Hook session belongs to this current chat, not proof for the other machine. Confirmed no successful new-api persistence at inspection time; local queue/config/trust/environment cause remains unknown and was not inspected per user steering. No test memories, remote data or client configuration modified.
+
+## 2026-11-09 Automatic memory with after-the-fact removal
+
+User confirmed automatic storage followed by optional review/removal. Plan: atomically auto-save evidence-validated review candidates, deduplicate identical normalized content within user/scope, preserve provenance and prevent deleted/rejected content from resurrecting. Add a reject operation and existing-delete synchronization, update console and client instructions, backfill pending candidates during rollout, verify database/worker and browser behavior, then deploy source and publish. Do not remove user memories or auto-change project rules from model suggestions.
+
+- [x] Implement atomic automatic promotion, deduplication, rejection and backward-compatible candidate backfill.
+- [x] Add rejection API and synchronize normal memory deletion with candidate state.
+- [x] Update console, plugin/skill instructions and design documentation.
+- [x] Run meaningful PG regression plus browser auto-save/removal/reload/mobile/console-network checks.
+- [ ] Deploy compatible cloud release, backfill existing pending candidates, verify indexing and real recall, and publish.
+
+### Review
+
+127 tests passed with real isolated PostgreSQL/Qdrant (2 existing warnings;19.42s); LLM outputs in regression are explicit offline fixtures. Browser isolated manual-review fixture verifies actual API/backfill auto save, cancel/confirm rejection, memory removal, reload, evidence, scope/disconnect and desktop/mobile with zero errors. Independent review found and fixed A→B edit/reproposal conflict and stale-candidate rejection of corrected content; regressions cover new and legacy IDs. Root added native rejection API/auth dispatch and all memory-delete projection paths synchronize candidate rejection.
+
+Deployed cloud release20261109-autosave, image30b9632d982e8afabb24ef80ec840f9d120fe721507e19c29febb0b37e8f1e9a; API healthy/worker running. Backfilled442 pending candidates without LLM re-extraction (robot-dog173). New real robot-dog reviews auto-save; real configured embedding+Qdrant recall matched auto memory at score1.0. Live robot-dog Playwright read-only desktop/mobile/reload/evidence passed with zero errors; actual business memories were not rejected. Background vector jobs were still draining at inspection. Code/skill validation and asset synchronization pass. Prior database/image retained for recovery. Verification report accepted by Memory OS capture_report; its own background review is asynchronous and not claimed completed. Publication pending.

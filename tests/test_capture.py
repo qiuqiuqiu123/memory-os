@@ -7,6 +7,7 @@ import uuid
 from types import SimpleNamespace
 
 import pytest
+from psycopg.types.json import Jsonb
 from test_core import core as pg_core  # noqa: F401
 
 from memory_os import capture
@@ -210,17 +211,17 @@ def test_redaction_long_logs_avoid_quadratic_backtracking(prefix):
     )
 
 
-def test_review_is_proposal_until_approved_and_evidence_remains(core, model):
+def test_review_auto_saves_with_evidence_and_retry_is_idempotent(core, model):
     uid = str(uuid.uuid4())
     body = batch()
     result = capture.ingest_batch(core, uid, body)
     job = claimed(core, result["review_job_ids"][0])
     capture.process_review(core, job)
-    assert core.memories(uid, body["scope"]) == []
+    assert len(core.memories(uid, body["scope"])) == 1
     review = capture.list_reviews(core, uid, body["scope"])[0]
     detail = capture.review_detail(core, uid, body["scope"], review["id"])
     candidate = detail["candidates"][0]
-    assert candidate["status"] == "pending"
+    assert candidate["status"] == "auto_saved"
     assert candidate["evidence_ids"] == ["e0"]
     assert (
         capture.approve_candidate(core, str(uuid.uuid4()), body["scope"], candidate["id"]) is None
@@ -304,12 +305,10 @@ def test_capture_type_allowlist_large_cjk_and_private_keys(core):
     assert len(result["review_job_ids"]) == 1
 
 
-def test_candidate_approval_rolls_back_event_and_status_together(core, model, monkeypatch):
+def test_review_auto_save_rolls_back_review_event_and_job_together(core, model, monkeypatch):
     uid = str(uuid.uuid4())
     result = capture.ingest_batch(core, uid, batch())
-    capture.process_review(core, claimed(core, result["review_job_ids"][0]))
-    review = capture.list_reviews(core, uid, "capture-test")[0]
-    candidate = capture.review_detail(core, uid, "capture-test", review["id"])["candidates"][0]
+    job = claimed(core, result["review_job_ids"][0])
     original_append = core.append
 
     def fail_after_event(*args, **kwargs):
@@ -318,11 +317,21 @@ def test_candidate_approval_rolls_back_event_and_status_together(core, model, mo
 
     monkeypatch.setattr(core, "append", fail_after_event)
     with pytest.raises(RuntimeError, match="offline fixture"):
-        capture.approve_candidate(core, uid, "capture-test", candidate["id"])
+        capture.process_review(core, job)
     assert core.memories(uid, "capture-test") == []
     assert core.sync(uid, 0, 10)["events"] == []
-    detail = capture.review_detail(core, uid, "capture-test", review["id"])
-    assert detail["candidates"][0]["status"] == "pending"
+    assert capture.list_reviews(core, uid, "capture-test") == []
+    with core.connection() as conn:
+        assert (
+            conn.execute("SELECT status FROM jobs WHERE id=%s", (job["id"],)).fetchone()["status"]
+            == "running"
+        )
+        assert (
+            conn.execute(
+                "SELECT count(*) AS n FROM capture_candidates WHERE user_id=%s", (uid,)
+            ).fetchone()["n"]
+            == 0
+        )
 
 
 @pytest.mark.parametrize(
@@ -357,3 +366,350 @@ def test_incomplete_model_output_never_commits_even_if_json_is_parseable(core, m
     assert len(model["calls"]) == 1
     assert model["calls"][0]["max_tokens"] == 6000
     assert capture.list_reviews(core, uid, "capture-test") == []
+
+
+def legacy_candidate(core, uid, scope="capture-test", content="A confirmed legacy fact"):
+    body = batch(complete=False)
+    body["scope"] = scope
+    session = capture.ingest_batch(core, uid, body)
+    rid, cid = uuid.uuid4(), uuid.uuid4()
+    with core.connection() as conn:
+        conn.execute(
+            "INSERT INTO capture_reviews(id,session_id,user_id,scope,start_seq,end_seq,result,model) "
+            "VALUES(%s,%s,%s,%s,1,1,%s,'offline-fixture')",
+            (rid, session["session_id"], uid, scope, Jsonb(fixture_result())),
+        )
+        conn.execute(
+            "INSERT INTO capture_candidates(id,review_id,user_id,scope,content,tags,evidence_ids) "
+            "VALUES(%s,%s,%s,%s,%s,%s,%s)",
+            (cid, rid, uid, scope, content, Jsonb(["practice"]), Jsonb(["e0"])),
+        )
+    return cid
+
+
+def reviewed_candidate(core, model, uid, content=None, scope="capture-test"):
+    if content is not None:
+        model["result"]["memory_candidates"][0]["content"] = content
+    body = batch()
+    body["scope"] = scope
+    result = capture.ingest_batch(core, uid, body)
+    capture.process_review(core, claimed(core, result["review_job_ids"][0]))
+    # Retrieve exact review by newly created session, not timestamp ordering.
+    review = next(
+        r
+        for r in capture.list_reviews(core, uid, scope)
+        if str(r["session_id"]) == result["session_id"]
+    )
+    return capture.review_detail(core, uid, scope, review["id"])["candidates"][0]
+
+
+def test_automatic_dedup_and_reject_blocks_future_reappearance(core, model):
+    uid = str(uuid.uuid4())
+    first = reviewed_candidate(core, model, uid, "Check tool output before retrying.")
+    duplicate = reviewed_candidate(core, model, uid, "Ｃheck  tool\noutput before retrying.")
+    assert first["memory_id"] == duplicate["memory_id"]
+    assert len(core.memories(uid, "capture-test")) == 1
+    assert len(core.sync(uid, 0, 100)["events"]) == 1
+    assert capture.reject_candidate(core, str(uuid.uuid4()), "capture-test", first["id"]) is None
+    assert capture.reject_candidate(core, uid, "different-scope", first["id"]) is None
+    rejected = capture.reject_candidate(core, uid, "capture-test", first["id"])
+    assert rejected["status"] == "rejected"
+    assert capture.reject_candidate(core, uid, "capture-test", first["id"])["duplicate"]
+    assert core.memories(uid, "capture-test") == []
+    later = reviewed_candidate(core, model, uid, "Check tool output before retrying.")
+    assert later["status"] == "rejected"
+    assert core.memories(uid, "capture-test") == []
+    assert len(core.sync(uid, 0, 100)["events"]) == 2  # create + delete, never resurrect
+    with pytest.raises(Conflict, match="rejected"):
+        capture.approve_candidate(core, uid, "capture-test", later["id"])
+    other_user = str(uuid.uuid4())
+    assert reviewed_candidate(core, model, other_user)["status"] == "auto_saved"
+    assert reviewed_candidate(core, model, uid, scope="another-project")["status"] == "auto_saved"
+
+
+def test_normal_memory_delete_rejects_links_and_is_not_revived(core, model):
+    uid = str(uuid.uuid4())
+    item = reviewed_candidate(core, model, uid)
+    core.append(
+        uid,
+        "capture-test",
+        [
+            {
+                "event_id": str(uuid.uuid4()),
+                "event_type": "memory.deleted",
+                "entity_type": "memory",
+                "entity_id": item["memory_id"],
+                "payload": {"reason": "ordinary REST/MCP deletion"},
+            }
+        ],
+    )
+    assert capture.reject_candidate(core, uid, "capture-test", item["id"])["duplicate"]
+    assert reviewed_candidate(core, model, uid)["status"] == "rejected"
+    assert core.memories(uid, "capture-test") == []
+
+
+def test_backfill_is_bounded_scoped_and_deduplicates_legacy_candidates(core):
+    uid, other_uid = str(uuid.uuid4()), str(uuid.uuid4())
+    legacy_candidate(core, uid)
+    legacy_candidate(core, uid, content="A  confirmed legacy fact")
+    legacy_candidate(core, uid, scope="different-scope")
+    legacy_candidate(core, other_uid)
+    first = capture.backfill_candidates(core, limit=1, uid=uid, scope="capture-test")
+    assert first == {"processed": 1, "saved": 1, "created": 1, "rejected": 0}
+    second = capture.backfill_candidates(core, limit=1, uid=uid, scope="capture-test")
+    assert second == {"processed": 1, "saved": 1, "created": 0, "rejected": 0}
+    assert capture.backfill_candidates(core, uid=uid, scope="capture-test")["processed"] == 0
+    assert len(core.memories(uid, "capture-test")) == 1
+    assert core.memories(uid, "different-scope") == []
+    assert core.memories(other_uid, "capture-test") == []
+
+
+def test_legacy_manual_approval_and_rejection_before_backfill(core):
+    uid = str(uuid.uuid4())
+    cid = legacy_candidate(core, uid)
+    approved = capture.approve_candidate(core, uid, "capture-test", cid)
+    assert approved["status"] == "approved"
+    assert capture.approve_candidate(core, uid, "capture-test", cid)["duplicate"]
+    rejected_cid = legacy_candidate(core, uid, content="A fact user does not want saved")
+    assert capture.reject_candidate(core, uid, "capture-test", rejected_cid)["status"] == "rejected"
+    assert capture.backfill_candidates(core, uid=uid)["processed"] == 0
+    assert len(core.memories(uid, "capture-test")) == 1
+
+
+def test_legacy_approval_rolls_back_status_and_event_together(core, monkeypatch):
+    uid = str(uuid.uuid4())
+    cid = legacy_candidate(core, uid)
+    original_append = core.append
+
+    def fail_after_event(*args, **kwargs):
+        original_append(*args, **kwargs)
+        raise RuntimeError("offline fixture simulates approval failure")
+
+    monkeypatch.setattr(core, "append", fail_after_event)
+    with pytest.raises(RuntimeError, match="approval failure"):
+        capture.approve_candidate(core, uid, "capture-test", cid)
+    assert core.memories(uid, "capture-test") == []
+    with core.connection() as conn:
+        assert (
+            conn.execute("SELECT status FROM capture_candidates WHERE id=%s", (cid,)).fetchone()[
+                "status"
+            ]
+            == "pending"
+        )
+
+
+def test_rejection_rolls_back_deleted_event_and_candidate_together(core, model, monkeypatch):
+    uid = str(uuid.uuid4())
+    candidate = reviewed_candidate(core, model, uid)
+    original_append = core.append
+
+    def fail_after_event(*args, **kwargs):
+        original_append(*args, **kwargs)
+        raise RuntimeError("offline fixture simulates reject failure")
+
+    monkeypatch.setattr(core, "append", fail_after_event)
+    with pytest.raises(RuntimeError, match="reject failure"):
+        capture.reject_candidate(core, uid, "capture-test", candidate["id"])
+    assert len(core.memories(uid, "capture-test")) == 1
+    with core.connection() as conn:
+        assert (
+            conn.execute(
+                "SELECT status FROM capture_candidates WHERE id=%s", (candidate["id"],)
+            ).fetchone()["status"]
+            == "auto_saved"
+        )
+
+
+def test_backfill_does_not_resurrect_legacy_deleted_memory_id(core):
+    uid = str(uuid.uuid4())
+    mid = str(uuid.uuid4())
+    core.append(
+        uid,
+        "capture-test",
+        [
+            {
+                "event_id": str(uuid.uuid4()),
+                "event_type": "memory.created",
+                "entity_type": "memory",
+                "entity_id": mid,
+                "payload": {"content": "Legacy confirmed fact", "tags": []},
+            }
+        ],
+    )
+    core.append(
+        uid,
+        "capture-test",
+        [
+            {
+                "event_id": str(uuid.uuid4()),
+                "event_type": "memory.deleted",
+                "entity_type": "memory",
+                "entity_id": mid,
+                "payload": {"reason": "user removed legacy record"},
+            }
+        ],
+    )
+    cid = legacy_candidate(core, uid, content="Legacy  confirmed fact")
+    assert capture.backfill_candidates(core, uid=uid) == {
+        "processed": 1,
+        "saved": 0,
+        "created": 0,
+        "rejected": 1,
+    }
+    assert core.memories(uid, "capture-test") == []
+    assert capture.reject_candidate(core, uid, "capture-test", cid)["duplicate"]
+    assert len(core.sync(uid, 0, 100)["events"]) == 2
+
+
+def test_concurrent_promotions_share_one_memory(core):
+    from concurrent.futures import ThreadPoolExecutor
+
+    uid = str(uuid.uuid4())
+    ids = [legacy_candidate(core, uid) for _ in range(2)]
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(
+            pool.map(lambda cid: capture.approve_candidate(core, uid, "capture-test", cid), ids)
+        )
+    assert results[0]["memory_id"] == results[1]["memory_id"]
+    assert sum(bool(r["created"]) for r in results) == 1
+    assert len(core.memories(uid, "capture-test")) == 1
+    assert len(core.sync(uid, 0, 100)["events"]) == 1
+
+
+@pytest.mark.parametrize("legacy_id", [False, True])
+def test_user_edit_is_preserved_when_later_review_proposes_old_content(core, model, legacy_id):
+    uid, scope = str(uuid.uuid4()), "capture-test"
+    original_content, edited_content = (
+        "The project uses Python 3.11.",
+        "The project now uses Python 3.12.",
+    )
+    if legacy_id:
+        cid = legacy_candidate(core, uid, content=original_content)
+        mid = str(uuid.uuid5(cid, "memory"))
+        core.append(
+            uid,
+            scope,
+            [
+                {
+                    "event_id": str(uuid.uuid4()),
+                    "event_type": "memory.created",
+                    "entity_type": "memory",
+                    "entity_id": mid,
+                    "payload": {"content": original_content, "tags": []},
+                }
+            ],
+        )
+        with core.connection() as conn:
+            conn.execute(
+                "UPDATE capture_candidates SET status='approved',memory_id=%s WHERE id=%s",
+                (mid, cid),
+            )
+        original_status = "approved"
+    else:
+        item = reviewed_candidate(core, model, uid, original_content)
+        cid, mid, original_status = item["id"], item["memory_id"], "auto_saved"
+    core.append(
+        uid,
+        scope,
+        [
+            {
+                "event_id": str(uuid.uuid4()),
+                "event_type": "memory.updated",
+                "entity_type": "memory",
+                "entity_id": mid,
+                "payload": {"new_content": edited_content, "reason": "user corrected fact"},
+            }
+        ],
+    )
+    later = reviewed_candidate(core, model, uid, original_content)
+    assert later["status"] == "rejected"
+    assert later["memory_id"] is None  # do not link rejection to the corrected active fact
+    memories = core.memories(uid, scope)
+    assert len(memories) == 1 and memories[0]["id"] == mid
+    assert memories[0]["content"] == edited_content
+    with core.connection() as conn:
+        assert (
+            conn.execute("SELECT status FROM capture_candidates WHERE id=%s", (cid,)).fetchone()[
+                "status"
+            ]
+            == original_status
+        )
+        assert (
+            conn.execute(
+                "SELECT status FROM jobs WHERE user_id=%s AND kind='capture_review' ORDER BY created_at DESC LIMIT 1",
+                (uid,),
+            ).fetchone()["status"]
+            == "completed"
+        )
+    core.append(
+        uid,
+        scope,
+        [
+            {
+                "event_id": str(uuid.uuid4()),
+                "event_type": "memory.deleted",
+                "entity_type": "memory",
+                "entity_id": mid,
+                "payload": {"reason": "user removed corrected fact"},
+            }
+        ],
+    )
+    assert reviewed_candidate(core, model, uid, original_content)["status"] == "rejected"
+    assert reviewed_candidate(core, model, uid, edited_content)["status"] == "rejected"
+    assert core.memories(uid, scope) == []
+
+
+@pytest.mark.parametrize("legacy_id", [False, True])
+def test_rejecting_stale_candidate_cannot_delete_user_edited_memory(core, model, legacy_id):
+    uid, scope = str(uuid.uuid4()), "capture-test"
+    original_content, edited_content = "Project fact A", "User corrected fact B"
+    if legacy_id:
+        cid = legacy_candidate(core, uid, content=original_content)
+        mid, original_status = str(uuid.uuid5(cid, "memory")), "approved"
+        core.append(
+            uid,
+            scope,
+            [
+                {
+                    "event_id": str(uuid.uuid4()),
+                    "event_type": "memory.created",
+                    "entity_type": "memory",
+                    "entity_id": mid,
+                    "payload": {"content": original_content, "tags": []},
+                }
+            ],
+        )
+        with core.connection() as conn:
+            conn.execute(
+                "UPDATE capture_candidates SET status='approved',memory_id=%s WHERE id=%s",
+                (mid, cid),
+            )
+    else:
+        item = reviewed_candidate(core, model, uid, original_content)
+        cid, mid, original_status = item["id"], item["memory_id"], "auto_saved"
+    core.append(
+        uid,
+        scope,
+        [
+            {
+                "event_id": str(uuid.uuid4()),
+                "event_type": "memory.updated",
+                "entity_type": "memory",
+                "entity_id": mid,
+                "payload": {"new_content": edited_content, "reason": "user correction"},
+            }
+        ],
+    )
+    before_events = core.sync(uid, 0, 100)["events"]
+    with pytest.raises(Conflict, match="Memory was edited"):
+        capture.reject_candidate(core, uid, scope, cid)
+    memories = core.memories(uid, scope)
+    assert len(memories) == 1 and memories[0]["content"] == edited_content
+    assert core.sync(uid, 0, 100)["events"] == before_events
+    with core.connection() as conn:
+        assert (
+            conn.execute("SELECT status FROM capture_candidates WHERE id=%s", (cid,)).fetchone()[
+                "status"
+            ]
+            == original_status
+        )

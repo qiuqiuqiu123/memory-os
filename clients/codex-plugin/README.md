@@ -12,7 +12,7 @@
 - Hook只读取本次stdin的白名单字段，忽略 transcript_path，不打开任何历史日志。
 - 每次触发先脱敏写SQLite，再有限上传，进程结束。断网时保留队列，下次Hook或手工flush重试；没有后台进程，因此无后续事件时不会自行补传。
 - MCP用于查询、明确remember以及capture_report补充决策/结论；Memory OS自身工具不重复采集，避免递归。
-- 原始轨迹不进入向量库；后台结论/优化点是待核验材料，候选长期记忆需在控制台批准。
+- 原始轨迹不进入向量库；后台结论/优化点是待核验材料，证据校验通过的候选自动入库，用户可在控制台事后剔除。
 
 ## 安装
 
@@ -85,7 +85,7 @@ Python解释器路径固定为安装时所用解释器，安装后不要删除�
 - 任务需要历史上下文时使用memory-os的inject/recall；记忆作为历史参考，不覆盖当前指令。
 - 用户明确要求记住或确认长期约定时，用remember(infer=false)保存事实，核对结果完成后再确认。
 - 用$memory-os补充Hook没有记录的已验证决策、失败原因和最终验证结论；通过capture_report进入待复盘轨迹，不直接当作长期记忆。
-- 自动复盘的候选记忆需用户在控制台批准；不自动修改代码、规则或已有记忆。
+- 自动复盘的有效候选由服务端自动入库；用户可在控制台剔除。不根据模型建议自动修改代码或全局规则。
 - MCP不可用时说明未保存并继续独立工作；异步任务未完成时不能说已复盘成功。
 ```
 
@@ -141,7 +141,7 @@ status pending=0表示上传队列为空，不代表LLM复盘完成。错误只�
 
 ## 在其他 Codex 中用一句提示词开始安装
 
-先给使用者开通私仓读取权限，并让其在本机完成 GitHub 认证（不在聊天中发送 GitHub token）。在 Codex 输入：
+仓库现已公开，无需私仓授权；连接记忆服务仍需要访问密钥。在 Codex 输入：
 
 ```text
 使用 $skill-installer 从 GitHub 仓库 qiuqiuqiu123/memory-os 安装 skills/memory-os-setup，安装完成后直接读取已安装目录的 SKILL.md，按其流程引导我接入 Memory OS。使用 MEMORY_OS_BASE_URL 和 MEMORY_OS_API_KEY 环境变量，询问需要共享的项目 scope；公网 HTTP 调试仅在明确选择后启用 MEMORY_OS_ALLOW_INSECURE_HTTP=1。不要另建密钥文件或让我把密钥发在聊天里。

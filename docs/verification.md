@@ -110,3 +110,14 @@ Playwright针对上述真实Hook会话验证5条事件、来源、真实复盘�
 未验收范围：Windows/Linux物理机器、Windows NTFS ACL及桌面端重启后的原生触发。当前桌面chat需重启或新开会话确认加载。无后续事件时断网队列不会自行补传，需下次Hook或手动flush。既有域名备案/HTTPS缺口未因插件完成而解决。
 
 Final deployed regression for the current native plugin release: **95 passed, 2 warnings in12.51s**, including22 native Hook tests. The21 former watcher tests were removed with their implementation; this count replaces the transitional112-test result.
+
+
+## 2026-11-09 自动记忆与事后剔除
+
+完整隔离PostgreSQL/Qdrant回归：127 passed，2条既有warning，19.42秒。模型提取测试使用显式离线fixture，不作为真实LLM质量结论。覆盖复盘/记忆/job原子提交、精确规范化去重及并发、拒绝幂等、普通REST/MCP删除同步、租户/scope隔离、回滚、历史候选回填，以及人工A→B编辑后禁止旧A回写或从旧候选误删B。
+
+Playwright使用隔离测试库和明确标注的手工复盘样例，通过真实backfill自动入库；验证自动保存、取消不删除、确认剔除后记忆消失、刷新保留状态、证据定位、scope切换、断开、1440px桌面与390px手机无溢出。console/page/network/HTTP错误均0。截图output/playwright/capture-auto-saved-desktop.png；这是手工样例，不冒充业务执行。
+
+云端发布目录/opt/memory-os/releases/20261109-autosave；API/worker镜像sha256:30b9632d982e8afabb24ef80ec840f9d120fe721507e19c29febb0b37e8f1e9a。发布前保留数据库备份及memory-os:before-autosave-20261109镜像。回填442条既有pending候选，其中robot-dog173条；回填不重复调用LLM。发布后真实robot-dog复盘产生auto_saved记忆，使用实际配置embedding接口和Qdrant完成召回，目标memory_id=501ce873-0ac6-5beb-aab1-de2fba061283，score=1.0。线上robot-dog Playwright只读验证来源、复盘、已自动保存、证据链接、重载和手机布局通过，错误均0，未剔除业务记忆。
+
+记忆写入与向量索引异步：检查时仍有历史vector任务在正常排队，不能把已回填全部等同于全部完成索引。去重仅为NFKC+空白规范化，不提供语义合并或真实性担保。

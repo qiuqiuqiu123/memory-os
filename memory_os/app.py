@@ -439,6 +439,16 @@ def approve_capture_candidate(cid: uuid.UUID, body: ScopeBody, uid: str = Depend
     return result
 
 
+@app.post("/api/v1/capture/candidates/{cid}/reject")
+def reject_capture_candidate(cid: uuid.UUID, body: ScopeBody, uid: str = Depends(user)):
+    from .capture import reject_candidate
+
+    result = reject_candidate(core, uid, body.scope, cid)
+    if not result:
+        raise HTTPException(404, "Capture candidate not found")
+    return result
+
+
 @app.get("/api/v1/traces/{tid}")
 def trace(tid: str, scope: str = "default", uid: str = Depends(user)):
     result = core.trace(uid, scope, tid)
@@ -536,10 +546,11 @@ def capture_report(
     """Supplement Codex execution evidence with explicitly reported events.
 
     This is a model-supplied report, not automatic complete execution capture
-    and not a durable memory write. Each event needs source_id, type, timestamp
+    and not a synchronous memory write. Each event needs source_id, type, timestamp
     (ISO8601), and body. Reuse batch_id/source_id on retries with identical
-    content. turn_complete schedules review of new evidence; memory candidates
-    still require human approval. Never report this capture_report MCP call or
+    content. turn_complete schedules review of new evidence; validated memory
+    candidates are saved automatically and can be removed afterwards.
+    Never report this capture_report MCP call or
     its result as another captured event, to prevent recursive self-collection.
     """
     from fastapi.encoders import jsonable_encoder

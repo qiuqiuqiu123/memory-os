@@ -58,10 +58,17 @@ embedding地址/模型/维度变化或显式reindex会在clock锁事务内创建
 
 capture_sessions/batches/events按user+scope隔离保存脱敏原始可见轨迹，不写向量库。调试版直接存PostgreSQL，不依赖未启动的Langfuse。task_complete/turn_aborted或100新增事件触发固定不重叠窗口（<=100事件、50k字符、12k输入tokens），持久job lease+attempt fence约束结果提交。模型使用在线设置，45秒单请求无SDK重试，6000输出tokens；官方DeepSeek禁thinking以避免推理耗尽结构化输出预算。length/content_filter、坏JSON、越界证据引用均失败重试，不能假成功。
 
-复盘与候选、job完成同事务。候选批准与memory.created同事务，事件metadata保留review/candidate/evidence引用；原始轨迹、模型建议、正式事实三层分离。单worker调试模式复盘与现有提取/向量任务共享队列，不声称并发容量。当前没有自动修改代码或自动写全局规则的闭环。
+复盘、有效候选自动保存、memory.created及job完成同事务，事件metadata保留review/candidate/evidence引用。候选状态区分auto_saved、approved（兼容历史）、rejected。用户可事后剔除记忆，留下删除事件和证据；原始轨迹、复盘建议、可检索记忆分别存储。自动保存标识来源，不代表模型结论已经人工确认。单worker调试模式复盘与现有提取/向量任务共享队列，不声称并发容量。当前没有自动修改代码或自动写全局规则的闭环。
 
 ## Native Hook and MCP adapter (2026-11-02, current)
 
 The active Codex adapter is an event-driven stdlib command invoked by native hooks.json. It consumes only a whitelisted stdin payload, never transcript_path or session logs. SessionStart offers bounded cloud recall; UserPromptSubmit/PreToolUse/PostToolUse/Stop persist redacted events to a local SQLite outbox and send bounded batches. SessionEnd submits an empty completion batch so it can schedule outstanding events without generating a metadata-only review after Stop. Delivery is at least once with stable batch IDs, receipt deduplication, lease recovery and acknowledgement validation. No resident agent or collector service is required; offline backlog retries on subsequent hooks or manual flush.
 
-The cloud event/review/approval pipeline is unchanged. Authenticated MCP capture_report is a second adapter for model-reported decisions and verified outcomes. It does not claim exhaustive execution coverage, nor directly write authoritative memories. Hook tools exclude this Memory OS MCP namespace to avoid recursive telemetry. Per-project scopes remain path-based with explicit cross-machine overrides. The previous JSONL watcher is retired from the active local installation.
+The cloud event/review pipeline now auto-saves validated memory candidates, with after-the-fact removal and exact normalized-content deduplication. Authenticated MCP capture_report is a second adapter for model-reported decisions and verified outcomes. It does not claim exhaustive execution coverage, nor directly write authoritative memories. Hook tools exclude this Memory OS MCP namespace to avoid recursive telemetry. Per-project scopes remain path-based with explicit cross-machine overrides. The previous JSONL watcher is retired from the active local installation.
+
+
+## 自动记忆与事后剔除（2026-11-09）
+
+默认不再要求逐条审批：后台证据引用校验通过后，在同一事务写入复盘、候选、正式记忆事件和向量任务。跨复盘的完全相同内容按用户/scope及NFKC+空白规范化去重；这是文本去重，不是语义合并、矛盾检测或真实性担保。
+
+剔除保留原始轨迹和复盘证据，追加memory.deleted并标记关联候选rejected。PG即时过滤删除记忆，Qdrant删除异步执行；候选重试或后续相同规范化内容不得自动复活。用户将记忆A修正为B后，历史候选A再次出现会被抑制，保留B；若从旧候选A点击剔除，会提示去记忆库核对B的当前版本后再删除。显式新事实、修正和恢复是独立操作，不由后台模型覆盖删除决定。历史pending候选可用有界backfill批处理转入同一路径，不重复调用LLM。

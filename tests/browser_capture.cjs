@@ -35,21 +35,24 @@ with psycopg.connect(x['database'],row_factory=dict_row) as c:
  c.execute('INSERT INTO capture_reviews(id,session_id,user_id,scope,start_seq,end_seq,result,model) VALUES(%s,%s,%s,%s,1,3,%s,%s)',(rid,s['id'],s['user_id'],s['scope'],Jsonb(result),'manual-browser-fixture-no-llm'))
  c.execute('INSERT INTO capture_candidates(id,review_id,user_id,scope,content,tags,evidence_ids) VALUES(%s,%s,%s,%s,%s,%s,%s)',(cid,rid,s['user_id'],s['scope'],result['memory_candidates'][0]['content'],Jsonb(['manual-browser-fixture']),Jsonb(['fixture-tool'])))
  c.execute('INSERT INTO jobs(id,user_id,scope,kind,payload,status,attempts,error,dedupe) VALUES(%s,%s,%s,%s,%s,%s,1,%s,%s)',(jid,s['user_id'],s['scope'],'capture_review',Jsonb({'session_id':str(s['id']),'start_seq':1,'end_seq':3}),'failed','手工测试失败状态：连接超时，尚无自动复盘结果','manual-browser-fixture:'+jid))
+from memory_os.capture import backfill_candidates
+from memory_os.core import Core
+backfill=backfill_candidates(Core(x['database']),uid=s['user_id'],scope=s['scope'])
+assert backfill['saved']==1
 print(json.dumps({'review_id':rid,'candidate_id':cid}))`;
    const seeded=execFileSync(python,['-c',seed],{input:JSON.stringify({database:process.env.MEMORY_OS_DATABASE_URL,session_id:sid,scope}),encoding:'utf8'});assert(JSON.parse(seeded).candidate_id);
   }
   await page.goto(base);await page.getByLabel('项目范围',{exact:true}).fill(scope);await page.getByLabel('访问密钥',{exact:true}).fill(key);await page.getByRole('button',{name:'连接服务',exact:true}).click();await page.getByText('已连接',{exact:true}).waitFor();
   await page.locator('[data-page="capture"]').click();await page.getByRole('button',{name:'查看会话复盘',exact:true}).first().click();
   await page.locator('#capture-session-meta').getByText(/来源 codex/).waitFor();
-  let approved=false;
+  let automaticallySaved=false,rejected=false;
   if(realReview){
    await page.locator('#capture-events summary').first().waitFor();
    for(let i=0;i<60;i++){if(await page.locator('#capture-reviews article').count())break;await new Promise(r=>setTimeout(r,2000));await page.locator('#refresh-capture-detail').click()}
    assert(await page.locator('#capture-reviews article').count(),'No review available within 120 seconds');
    const links=page.locator('#capture-reviews a');if(await links.count())await links.first().click();
-   if(await page.getByRole('button',{name:'批准为记忆',exact:true}).count()){
-    await page.getByRole('button',{name:'批准为记忆',exact:true}).first().click();await page.locator('#capture-reviews').getByText(/已批准为记忆/).first().waitFor();approved=true;
-   }
+   assert.equal(await page.getByRole('button',{name:'保存历史候选',exact:true}).count(),0,'New reviews must not require approval');
+   automaticallySaved=!!(await page.locator('#capture-reviews').getByText(/已自动保存为记忆/).count());
   }else{
    await page.locator('#capture-events summary').filter({hasText:'已脱敏'}).waitFor();await page.locator('#capture-events summary').filter({hasText:'已截断'}).waitFor();
    assert(!(await page.locator('#capture-events').innerText()).includes('sk-fixture-credential-never-display'));
@@ -57,15 +60,27 @@ print(json.dumps({'review_id':rid,'candidate_id':cid}))`;
    await page.locator('#capture-reviews').getByText(/后台复盘任务：处理失败/).waitFor();
    await page.locator('#capture-reviews').getByText(/手工测试失败状态/).waitFor();
    const evidence=page.locator('#capture-reviews a').filter({hasText:'fixture-tool'}).first();await evidence.click();assert(await page.locator('#capture-event-fixture-tool').evaluate(e=>e.open));
-   const before=await api('/memories?scope='+encodeURIComponent(scope));assert(!before.items.some(m=>m.content.includes('手工候选经验')),'Candidate entered memory before approval');
-   await page.getByRole('button',{name:'批准为记忆',exact:true}).first().click();await page.locator('#capture-reviews').getByText(/已批准为记忆/).waitFor();
-   const after=await api('/memories?scope='+encodeURIComponent(scope));assert(after.items.some(m=>m.content.includes('手工候选经验')),'Approved candidate is missing from memory');
-   assert.equal(await page.getByRole('button',{name:'批准为记忆',exact:true}).count(),0);approved=true;
+   await page.locator('#capture-reviews').getByText(/已自动保存为记忆/).waitFor();
+   const before=await api('/memories?scope='+encodeURIComponent(scope));assert(before.items.some(m=>m.content.includes('手工候选经验')),'Automatically saved memory is missing');
+   assert.equal(await page.getByRole('button',{name:'保存历史候选',exact:true}).count(),0);automaticallySaved=true;
+   fs.mkdirSync('output/playwright',{recursive:true});await page.screenshot({path:'output/playwright/capture-auto-saved-desktop.png',fullPage:true,animations:'disabled'});
+   await page.getByRole('button',{name:'剔除记忆',exact:true}).first().click();
+   await page.locator('#reject-capture-dialog').getByRole('button',{name:'取消',exact:true}).click();
+   assert((await api('/memories?scope='+encodeURIComponent(scope))).items.some(m=>m.content.includes('手工候选经验')),'Cancel removed the memory');
+   await page.getByRole('button',{name:'剔除记忆',exact:true}).first().click();
+   await page.getByRole('button',{name:'确认剔除',exact:true}).click();
+   await page.locator('#capture-reviews').getByText(/已剔除 · 不再参与检索/).waitFor();
+   const after=await api('/memories?scope='+encodeURIComponent(scope));assert(!after.items.some(m=>m.content.includes('手工候选经验')),'Rejected memory remains active');
+   assert.equal(await page.getByRole('button',{name:'剔除记忆',exact:true}).count(),0);rejected=true;
   }
+  await page.reload();await page.getByText('已连接',{exact:true}).waitFor();
+  assert.equal(await page.getByLabel('项目范围',{exact:true}).inputValue(),scope,'Scope was not retained after reload');
+  await page.locator('[data-page="capture"]').click();await page.getByRole('button',{name:'查看会话复盘',exact:true}).first().click();
+  if(rejected)await page.locator('#capture-reviews').getByText(/已剔除 · 不再参与检索/).waitFor();
   fs.mkdirSync('output/playwright',{recursive:true});await page.evaluate(()=>scrollTo(0,0));await page.screenshot({path:'output/playwright/capture-desktop.png',fullPage:true,animations:'disabled'});
   await page.setViewportSize({width:390,height:844});assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'Mobile overflow');await page.screenshot({path:'output/playwright/capture-mobile.png',fullPage:true,animations:'disabled'});
   await page.getByLabel('项目范围',{exact:true}).fill(scope+'-empty');await page.getByLabel('项目范围',{exact:true}).press('Tab');await page.locator('#capture-sessions .empty').waitFor();assert(await page.locator('#capture-detail-card').isHidden(),'Previous scope evidence remained visible');
   await page.getByRole('button',{name:'断开',exact:true}).click();assert(await page.locator('#capture-detail-card').isHidden());
-  assert.deepEqual(errors,[]);assert.deepEqual(failed,[]);assert.deepEqual(bad,[]);console.log(JSON.stringify({passed:true,scope,session_id:sid,manualReviewFixture:!realReview,externalLLM:realReview,redaction:!realReview,truncation:!realReview,evidenceLinks:true,approval:approved,errors,failed,bad}));
+  assert.deepEqual(errors,[]);assert.deepEqual(failed,[]);assert.deepEqual(bad,[]);console.log(JSON.stringify({passed:true,scope,session_id:sid,manualReviewFixture:!realReview,externalLLM:realReview,redaction:!realReview,truncation:!realReview,evidenceLinks:true,automaticallySaved,rejection:rejected,errors,failed,bad}));
  }finally{await browser.close()}
 })().catch(e=>{console.error(e);process.exitCode=1});

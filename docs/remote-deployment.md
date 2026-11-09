@@ -88,3 +88,10 @@ Embedding Base URL填写 `https://ai.gitee.com/v1`，不是完整的 `/v1/embedd
 ## 2026-11-02 当前：原生Hook + MCP插件
 
 应用release为 `/opt/memory-os/releases/20261102-hooks-v1`，Compose项目、shared配置和数据库/向量卷保持不变。仅重建API/worker，其他应用与BGE未改。MCP新增capture_report（共9工具），复用鉴权/批次幂等/复盘链路。本机原生6类Hook已安装；日志watcher保持停止。插件与多机器接入说明见 ../clients/codex-plugin/README.md。线上GPT/embedding提供方继续由在线设置决定。
+
+
+## 2026-11-09 自动保存发布
+
+当前版本目录为 `/opt/memory-os/releases/20261109-autosave`，沿用受保护的shared/.env和compose.host.yml，仅重建API/worker，不变更PostgreSQL、Qdrant、BGE及其他应用。证据校验通过的复盘候选自动写入记忆，用户可事后剔除；历史pending通过capture.backfill_candidates有界批处理入库，来源记录保留。向量索引异步执行。
+
+发布前备份：`/opt/memory-os/shared/backups/before-autosave-20261109.dump`（受限权限）；旧镜像标签`memory-os:before-autosave-20261109`。回退应用镜像不会撤销已保存的记忆；不要通过删除事件或候选修复状态。剔除使用控制台/正式API，保留删除墓碑与防复活行为。

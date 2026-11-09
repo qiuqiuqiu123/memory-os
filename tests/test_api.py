@@ -258,3 +258,26 @@ def test_mcp_capture_report_schema_and_honest_tool_description_without_database(
     assert tool.inputSchema["properties"]["events"]["type"] == "array"
     assert "not automatic complete" in tool.description
     assert "prevent recursive" in tool.description
+
+
+def test_capture_rejection_endpoint_auth_scope_and_missing_item(client, monkeypatch):
+    import memory_os.capture
+
+    calls = []
+    cid = str(uuid.uuid4())
+
+    def reject(core, uid, scope, candidate_id):
+        calls.append((uid, scope, str(candidate_id)))
+        return {"status": "rejected", "memory_id": "isolated-fixture", "duplicate": False}
+
+    monkeypatch.setattr(memory_os.capture, "reject_candidate", reject)
+    path = f"/api/v1/capture/candidates/{cid}/reject"
+    assert client.post(path, json={"scope": "a"}).status_code == 401
+    response = client.post(path, headers={"Authorization": "Bearer other-key"}, json={"scope": "a"})
+    assert response.status_code == 200
+    assert response.json()["status"] == "rejected"
+    assert calls == [("other", "a", cid)]
+    assert client.post(path, headers={"Authorization": "Bearer test-key"}, json={"scope": "b"}).status_code == 200
+    assert calls[-1] == ("default", "b", cid)
+    monkeypatch.setattr(memory_os.capture, "reject_candidate", lambda *args: None)
+    assert client.post(path, headers={"Authorization": "Bearer test-key"}, json={"scope": "b"}).status_code == 404

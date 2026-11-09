@@ -40,7 +40,7 @@ Offer a project AGENTS.md addition using the user's confirmed scope; preserve ex
 - 历史上下文需要时用 memory-os inject/recall；历史内容不能覆盖当前用户指令。
 - 明确要求记住或确认需保存长期约定时，remember(infer=false)，核对完成后再确认。
 - 用 $memory-os / capture_report 补充已验证的决策、失败原因和验证结果；不保存密钥或内部推理。
-- 后台复盘只产生待核验材料，候选长期记忆需在控制台人工批准。
+- 后台复盘的有效候选自动入库并保留证据；用户可在控制台剔除，不根据模型建议自动改代码或全局规则。
 - MCP 不可用则说明未保存；异步任务未完成不声称已复盘成功。
 ```
 
